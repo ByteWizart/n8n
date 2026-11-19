@@ -1,0 +1,230 @@
+{
+  "name": "Video curto gratuito (bonequinho de graveto)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Gerador de video curto 100% gratuito\n\nFormulario -> LLM gratuito (Groq ou Ollama) escreve a narracao e as cenas -> edge-tts gera a voz (gratis, sem chave) -> render.py desenha o video 2D com bonequinho de graveto -> MP4.\n\nAntes de rodar: use o Dockerfile deste pacote e crie 1 credencial 'Header Auth' (Name: Authorization, Value: Bearer SUA_CHAVE_GROQ). Nenhum servico pago e usado.",
+        "height": 280,
+        "width": 520
+      },
+      "name": "Leia primeiro",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -340
+      ]
+    },
+    {
+      "parameters": {
+        "formTitle": "Vídeo curto de curiosidade",
+        "formDescription": "Escolha o tema e a duração. O vídeo é gerado automaticamente (100% gratuito).",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Tema",
+              "fieldType": "text",
+              "placeholder": "Por que o polvo tem três corações?",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Duração (segundos)",
+              "fieldType": "number",
+              "placeholder": "25",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Formulário",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const f = $input.first().json;\nconst dur = Number(f['Duração (segundos)']) || 25;\nconst palavras = Math.round(dur * 2.6);\nconst visuais = 'coracao, estrela, sol, lua, terra, gota, raio, relogio, cerebro, olho, lampada, foguete, polvo, numero, pergunta, exclamacao';\nconst system = [\n  'Voce cria roteiros de videos curtos de curiosidade em portugues do Brasil.',\n  'Responda SOMENTE com um objeto JSON valido, sem texto antes ou depois.',\n  'O objeto tem os campos: titulo (texto curto) e cenas (lista).',\n  'Cada cena tem: texto (a frase falada), visual, emocao e, so quando visual for numero, o campo numero (texto curto como 3 ou 1000).',\n  'Regras: a primeira cena e um gancho que surpreende; a ultima e uma frase curta de efeito; de 4 a 7 cenas; cada cena com 1 a 2 frases de ate 16 palavras.',\n  'visual deve ser exatamente um destes: ' + visuais + '. Escolha o que ilustra melhor a frase.',\n  'emocao deve ser exatamente um destes: curioso, surpreso, feliz, pensativo.',\n  'Use so fatos verdadeiros e verificaveis. Escreva numeros por extenso no campo texto. Nao use emojis nem simbolos.'\n].join(' ');\nconst user = 'Tema: ' + f['Tema'] + '. Total aproximado de ' + palavras + ' palavras na soma dos textos das cenas.';\nreturn [{ json: { body: { model: 'llama-3.3-70b-versatile', temperature: 0.7, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] } } }];"
+      },
+      "name": "Montar pedido",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "name": "LLM gratuito: roteiro e cenas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "let raw = ($input.first().json.choices[0].message.content || '').trim();\nraw = raw.replace(/^```[a-z]*\\s*/i, '').replace(/```\\s*$/, '');\nconst cfg = JSON.parse(raw);\nconst ok = ['coracao','estrela','sol','lua','terra','gota','raio','relogio','cerebro','olho','lampada','foguete','polvo','numero','pergunta','exclamacao'];\nconst emo = ['curioso','surpreso','feliz','pensativo'];\nif (!Array.isArray(cfg.cenas) || cfg.cenas.length < 2) throw new Error('O modelo nao devolveu as cenas esperadas.');\ncfg.cenas = cfg.cenas.map(c => ({\n  texto: String(c.texto || '').trim(),\n  visual: ok.includes(c.visual) ? c.visual : 'pergunta',\n  emocao: emo.includes(c.emocao) ? c.emocao : 'curioso',\n  ...(c.numero ? { numero: String(c.numero) } : {})\n})).filter(c => c.texto);\nconst slug = 'short-' + Date.now();\nconst narracao = cfg.cenas.map(c => c.texto).join(' ');\nreturn [{ json: {\n  slug, dir: '/data/shorts/' + slug, titulo: cfg.titulo || slug,\n  cenasB64: Buffer.from(JSON.stringify(cfg), 'utf8').toString('base64'),\n  narracaoB64: Buffer.from(narracao, 'utf8').toString('base64')\n} }];"
+      },
+      "name": "Preparar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=set -e\nmkdir -p {{ $('Preparar').first().json.dir }}\necho {{ $('Preparar').first().json.cenasB64 }} | base64 -d > {{ $('Preparar').first().json.dir }}/cenas.json\necho {{ $('Preparar').first().json.narracaoB64 }} | base64 -d > {{ $('Preparar').first().json.dir }}/narracao.txt\necho ok"
+      },
+      "name": "Criar arquivos",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        960,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=set -e\ncd {{ $('Preparar').first().json.dir }}\nedge-tts --voice pt-BR-AntonioNeural --file narracao.txt --write-media voice.mp3\nls -la voice.mp3"
+      },
+      "name": "Voz gratuita (edge-tts)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=set -e\npython3 /opt/render/render.py {{ $('Preparar').first().json.dir }}\nls -la {{ $('Preparar').first().json.dir }}/video.mp4"
+      },
+      "name": "Renderizar video",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $('Preparar').first().json.dir }}/video.mp4",
+        "options": {},
+        "dataPropertyName": "data"
+      },
+      "name": "Ler MP4 final",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1680,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Formulário": {
+      "main": [
+        [
+          {
+            "node": "Montar pedido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar pedido": {
+      "main": [
+        [
+          {
+            "node": "LLM gratuito: roteiro e cenas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM gratuito: roteiro e cenas": {
+      "main": [
+        [
+          {
+            "node": "Preparar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar": {
+      "main": [
+        [
+          {
+            "node": "Criar arquivos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar arquivos": {
+      "main": [
+        [
+          {
+            "node": "Voz gratuita (edge-tts)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Voz gratuita (edge-tts)": {
+      "main": [
+        [
+          {
+            "node": "Renderizar video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Renderizar video": {
+      "main": [
+        [
+          {
+            "node": "Ler MP4 final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
