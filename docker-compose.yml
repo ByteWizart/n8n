@@ -1,0 +1,12 @@
+services:
+  n8n-shorts:
+    build: .
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/root/.n8n
+      - ./shorts:/data/shorts      # os vídeos ficam aqui, na sua máquina
+    shm_size: "2gb"                # o Chromium precisa de memória compartilhada
+    restart: unless-stopped
+volumes:
+  n8n_data:
